@@ -169,6 +169,10 @@ module Processor (
         begin
             case (state)
                 IF: begin
+                    state <= IF_WAIT;
+                end
+
+                IF_WAIT: begin
                     if (PC == 0)
                         instr <= 32'b00000000000000000000000000000000;
                     else
@@ -189,6 +193,10 @@ module Processor (
                 end
 
                 MM: begin
+                    state <= MM_WAIT; 
+                end
+
+                MM_WAIT: begin
                     state <= WB;
                 end
 
