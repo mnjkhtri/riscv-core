@@ -196,6 +196,8 @@ module SOC (
     //LUI rd, imm; rd <= Uimm
     //AUIPC rd, imm; rd <= PC+Uimm
 
+    //[5.] LOAD and STORE in next module
+
     reg takeBranch;
     always @(*) begin
         case(funct3)
