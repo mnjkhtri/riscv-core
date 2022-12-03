@@ -22,13 +22,23 @@ module Memory (
         MEM[2] = 32'b00000000000100010000000100010011;
 
         //jal 0, <two up>; use this for jump simulation
-        MEM[3] = 32'b11111111110111111111000001101111;
+        //MEM[3] = 32'b11111111110111111111000001101111;
 
         //bne x1, x2, <twoup>; use this for branch simulation
         //MEM[3] = 32'b11111110001000001001111011100011;
 
+        //or some illegal instruction for neither
+        MEM[3] = 32'b00000000000000000000000000000000;
+
+        //LW x1, 400(x0)
+        MEM[4] = 32'b00011001000000000010000010000011;
+
         //ebreak call
-        MEM[4] = 32'b000000000001_00000_000_00000_1110011;
+        MEM[5] = 32'b000000000001_00000_000_00000_1110011;
+
+        //Memory fillup for loads and stores instructions:
+        MEM[100] = {8'h4, 8'h3, 8'h2, 8'h1};
+
     end
     always @(posedge clk) begin
         if (rd_en)
@@ -92,14 +102,14 @@ module Processor (
     //AUTOMATA THAT EXECUTES THE INSTRUCTIONS:
     //State identifiers
     localparam IF = 0;
-    localparam ID = 1;
-    localparam EX = 2;
-    localparam MM = 3;
-    localparam WB = 4;
+    localparam ID = 2;
+    localparam EX = 3;
+    localparam MM = 4;
+    localparam WB = 6;
 
     //New states where waits for data from memory
-    localparam IF_WAIT = 5;
-    localparam MM_WAIT = 6;
+    localparam IF_WAIT = 1;
+    localparam MM_WAIT = 5;
 
     //Current state
     reg[2:0] state = IF;
@@ -148,16 +158,36 @@ module Processor (
     assign WBData = (isJAL || isJALR) ? (PC+4) :
                     (isLUI) ? Uimm :
                     (isAUIPC) ? (PC + Uimm) :
+                    (isLoad) ? LOAD_data :
                     aluOut;
 
     //Instructions which allow writing to register files
-    assign isWB = (isALUreg || isALUimm || isJAL || isJALR || isLUI || isAUIPC);
+    assign isWB = (isALUreg || isALUimm || isJAL || isJALR || isLUI || isAUIPC || isLoad);
 
     //Now possibility for new PC is not just increment
     wire [31:0] nextPC =    isJAL ? PC+Jimm : 
                             isJALR ? PC+Iimm : 
                             (isBranch && takeBranch) ? PC+Bimm :
                             PC+4;
+
+    //Implement LOADs and STOREs:
+    //LOADs: rd <= rs1 + imm
+    wire [31:0] loadstore_addr = rs1 + Iimm;    //Address to send to get the data
+
+    //Based on alignment of address, get possible bytes, halfwords and words:
+    wire [15:0] LOAD_halfword = loadstore_addr[1] ? mem_rdata[31:16] : mem_rdata[15:0];
+    wire [7:0] LOAD_byte = loadstore_addr[0] ? LOAD_halfword[15:8] : LOAD_halfword[7:0];
+
+    //See what type of load it is:
+    wire mem_byteAccess = (funct3[1:0] == 2'b00);
+    wire mem_halfwordAccess = (funct3[1:0] == 2'b01);
+
+    //Sign extension variation:
+    wire LOAD_sign = !funct3[2] & (mem_byteAccess ? LOAD_byte[7] : LOAD_halfword[15]);
+
+    wire [31:0] LOAD_data = mem_byteAccess ? {{24{LOAD_sign}}, LOAD_byte} :
+                            mem_halfwordAccess ? {{16{LOAD_sign}}, LOAD_halfword} :
+                            mem_rdata;
 
     always @(posedge clk) 
     begin
@@ -212,9 +242,8 @@ module Processor (
         `endif
     end
 
-    //Regarding these send PC as address to memory module
-    assign mem_addr = PC;
-    assign rd_en = (state == IF);
+    assign mem_addr = (state == IF) ? PC : loadstore_addr;
+    assign rd_en = (state == IF || state == MM);
 
     `ifdef BENCH
     //The following is bench portion interpreting the output
@@ -234,6 +263,9 @@ module Processor (
                 isSYSTEM: $display("Current PC=%0d SYSTEM", PC);
                 default: $display("ILLEGAL PC=%0d", PC);
             endcase
+
+        if (isWB && state == WB)
+            $display("Value written %h", WBData);
     end
     `endif
 
